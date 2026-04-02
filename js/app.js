@@ -290,13 +290,24 @@ async function sendKoeberrapportToAI(settings, address, fileContents, options) {
   }
 
   // Total content is too large for one request – process ALL uploaded documents
-  // with the AI so the full content is read.  Documents exceeding CHUNK_SIZE are
-  // split into multiple sequential chunks; smaller documents are processed as a
-  // single chunk.  This prevents any document from being silently dropped.
+  // with the AI so the full content is read.  All documents are dispatched in
+  // parallel so the total wait time equals the slowest document, not the sum.
+  updateTypingStatus('Analyserer dokumenter…');
+  const uploadedDocs = docMeta.filter(([key]) => fileContents[key]);
+  const docResults = await Promise.allSettled(
+    uploadedDocs.map(([key, label]) =>
+      processDocumentInChunks(settings, label, address, fileContents[key])
+        .then(summary => [key, summary])
+    )
+  );
+
   const processedContents = {};
-  for (const [key, label] of docMeta) {
-    if (!fileContents[key]) continue;
-    processedContents[key] = await processDocumentInChunks(settings, label, address, fileContents[key]);
+  for (let i = 0; i < uploadedDocs.length; i++) {
+    const [key, label] = uploadedDocs[i];
+    const result = docResults[i];
+    processedContents[key] = result.status === 'fulfilled'
+      ? result.value[1]
+      : `[Analyse af ${label} mislykkedes: ${result.reason?.message || 'Ukendt fejl'}]`;
   }
 
   // Build and send the final report using the processed (summarised) content
@@ -308,9 +319,10 @@ async function sendKoeberrapportToAI(settings, address, fileContents, options) {
 }
 
 /**
- * Split a large document into CHUNK_SIZE pieces, send each chunk to the AI
- * asking for a structured extraction of key findings, and return the combined
- * summaries.  This replaces the old hard truncation at MAX_DOCUMENT_CHARS.
+ * Split a large document into CHUNK_SIZE pieces, analyse all chunks in parallel,
+ * and return the combined AI-generated summaries in original order.
+ * Using Promise.all means all chunks are dispatched simultaneously so the total
+ * wait equals the slowest chunk, not the sum of all chunks.
  */
 async function processDocumentInChunks(settings, docLabel, address, content) {
   const chunks = [];
@@ -318,20 +330,23 @@ async function processDocumentInChunks(settings, docLabel, address, content) {
     chunks.push(content.slice(i, i + CHUNK_SIZE));
   }
 
-  const summaries = [];
-  for (let i = 0; i < chunks.length; i++) {
-    updateTypingStatus(`Analyserer ${docLabel} (del ${i + 1}/${chunks.length})…`);
+  const chunkResults = await Promise.allSettled(chunks.map((chunk, i) => {
     const chunkPrompt =
       `Du analyserer del ${i + 1} af ${chunks.length} af dokumentet "${docLabel}" ` +
       `for boligen på ${address}.\n\n` +
       `Uddrag alle vigtige oplysninger fra denne del: fund, karakterer (K1/K2/K3), ` +
-      `problemer, anbefalinger og relevante tal.\n\n${chunks[i]}`;
-    const summary = await AIApi.sendMessage(settings, [
+      `problemer, anbefalinger og relevante tal.\n\n${chunk}`;
+    return AIApi.sendMessage(settings, [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user',   content: chunkPrompt },
-    ]);
-    summaries.push(`[Del ${i + 1}/${chunks.length}]\n${summary}`);
-  }
+    ]).then(summary => `[Del ${i + 1}/${chunks.length}]\n${summary}`);
+  }));
+
+  const summaries = chunkResults.map((result, i) =>
+    result.status === 'fulfilled'
+      ? result.value
+      : `[Del ${i + 1}/${chunks.length}]\n[Analyse mislykkedes: ${result.reason?.message || 'Ukendt fejl'}]`
+  );
 
   return summaries.join('\n\n');
 }
