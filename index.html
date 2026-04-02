@@ -34,6 +34,9 @@
       <button class="btn-new-chat" id="btn-new-chat" aria-label="Start ny samtale">
         <span aria-hidden="true">＋</span> Ny samtale
       </button>
+      <button class="btn-bolig-rapport" id="btn-bolig-rapport" aria-label="Søg på relevant bolig og generer køberrapport">
+        🏠 Søg på bolig
+      </button>
     </div>
 
     <div class="sidebar-section-title">Samtaler</div>
@@ -128,6 +131,126 @@
 
   </main>
 
+</div>
+
+<!-- ===================== Bolig Rapport Modal ===================== -->
+<div id="bolig-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="bolig-modal-title">
+  <div class="modal modal-wide">
+
+    <div class="modal-header">
+      <h2 id="bolig-modal-title">🏠 Søg på relevant bolig</h2>
+      <button class="btn-close-modal" id="btn-close-bolig" aria-label="Luk">✕</button>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- Address -->
+      <div class="form-group">
+        <label for="bolig-address">Boligens adresse <span class="required-mark">*</span></label>
+        <input
+          type="text"
+          id="bolig-address"
+          placeholder="F.eks. Eksempelvej 1, 2000 Frederiksberg"
+          autocomplete="street-address"
+          spellcheck="false"
+        >
+        <p class="form-desc">Angiv den fulde adresse inkl. postnummer og by.</p>
+      </div>
+
+      <!-- Document uploads -->
+      <div class="form-group">
+        <label>Uploadede dokumenter <small class="label-optional">(valgfrit)</small></label>
+        <p class="form-desc">Accepterede formater: PDF (digital/søgbar), TXT. Scannede PDF-filer understøttes ikke – gem som TXT eller kopier teksten manuelt.</p>
+
+        <div class="upload-grid">
+
+          <div class="upload-item">
+            <div class="upload-item-label">📋 Tilstandsrapport</div>
+            <div class="file-upload-zone" id="zone-tilstandsrapport">
+              <input type="file" id="file-tilstandsrapport" accept=".pdf,.txt" class="file-input-hidden" data-doc="tilstandsrapport">
+              <label for="file-tilstandsrapport" class="file-upload-trigger">📎 Vælg fil</label>
+              <div class="file-upload-preview" id="preview-tilstandsrapport" style="display:none;">
+                <span class="file-name" id="name-tilstandsrapport"></span>
+                <button class="file-remove-btn" type="button" data-doc="tilstandsrapport" aria-label="Fjern fil">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="upload-item">
+            <div class="upload-item-label">⚡ Elinstallationsrapport</div>
+            <div class="file-upload-zone" id="zone-elattest">
+              <input type="file" id="file-elattest" accept=".pdf,.txt" class="file-input-hidden" data-doc="elattest">
+              <label for="file-elattest" class="file-upload-trigger">📎 Vælg fil</label>
+              <div class="file-upload-preview" id="preview-elattest" style="display:none;">
+                <span class="file-name" id="name-elattest"></span>
+                <button class="file-remove-btn" type="button" data-doc="elattest" aria-label="Fjern fil">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="upload-item">
+            <div class="upload-item-label">🌿 Energimærkerapport</div>
+            <div class="file-upload-zone" id="zone-energimaerke">
+              <input type="file" id="file-energimaerke" accept=".pdf,.txt" class="file-input-hidden" data-doc="energimaerke">
+              <label for="file-energimaerke" class="file-upload-trigger">📎 Vælg fil</label>
+              <div class="file-upload-preview" id="preview-energimaerke" style="display:none;">
+                <span class="file-name" id="name-energimaerke"></span>
+                <button class="file-remove-btn" type="button" data-doc="energimaerke" aria-label="Fjern fil">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="upload-item">
+            <div class="upload-item-label">📊 Salgsopstilling</div>
+            <div class="file-upload-zone" id="zone-salgsopstilling">
+              <input type="file" id="file-salgsopstilling" accept=".pdf,.txt" class="file-input-hidden" data-doc="salgsopstilling">
+              <label for="file-salgsopstilling" class="file-upload-trigger">📎 Vælg fil</label>
+              <div class="file-upload-preview" id="preview-salgsopstilling" style="display:none;">
+                <span class="file-name" id="name-salgsopstilling"></span>
+                <button class="file-remove-btn" type="button" data-doc="salgsopstilling" aria-label="Fjern fil">✕</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Report options -->
+      <div class="form-group">
+        <label>Inkluder i køberrapporten</label>
+        <div class="option-list">
+          <label class="option-item">
+            <input type="checkbox" id="opt-flags" checked>
+            <span>
+              <strong>🚦 Røde, Gule og Grønne flag</strong>
+              <span class="option-desc">Struktureret liste over opmærksomhedspunkter</span>
+            </span>
+          </label>
+          <label class="option-item">
+            <input type="checkbox" id="opt-forhandling" checked>
+            <span>
+              <strong>💬 Hjælp til prisforhandling</strong>
+              <span class="option-desc">Forhandlingsargumenter og -strategi baseret på rapporten</span>
+            </span>
+          </label>
+          <label class="option-item">
+            <input type="checkbox" id="opt-prisoverslag" checked>
+            <span>
+              <strong>🔧 Prisoverslag for udbedring</strong>
+              <span class="option-desc">Estimerede omkostninger til at udbedre fejl og mangler</span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-cancel" id="btn-cancel-bolig">Annuller</button>
+      <button class="btn-generate-report" id="btn-generate-report">📄 Generer Køberrapport</button>
+    </div>
+
+  </div>
 </div>
 
 <!-- ===================== Settings Modal ===================== -->
