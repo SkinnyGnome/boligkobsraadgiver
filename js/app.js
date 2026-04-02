@@ -40,7 +40,8 @@ let isLoading = false;
    ------------------------------------------------------- */
 
 const MAX_FILE_SIZE_BYTES  = 5 * 1024 * 1024; // 5 MB
-const MAX_DOCUMENT_CHARS   = 8000;             // per document, to stay within AI token limits
+const MAX_PROMPT_CHARS     = 80000;            // max chars for a single AI request (~20K tokens)
+const CHUNK_SIZE           = 24000;            // chars per chunk when splitting large documents
 const BOLIG_DOCS           = ['tilstandsrapport', 'elattest', 'energimaerke', 'salgsopstilling'];
 
 const boligFileContents = {
@@ -154,10 +155,7 @@ function buildKoeberrapportPrompt(address, fileContents, options) {
     parts.push(`\n---\n## Dokumenter til analyse\n`);
     for (const [key, label] of uploaded) {
       const content = fileContents[key];
-      const trimmed = content.length > MAX_DOCUMENT_CHARS
-        ? content.slice(0, MAX_DOCUMENT_CHARS) + '\n[...dokument forkortet pga. længde...]'
-        : content;
-      parts.push(`\n### ${label}\n${trimmed}\n`);
+      parts.push(`\n### ${label}\n${content}\n`);
     }
     parts.push(`\n---\n`);
   }
@@ -219,7 +217,6 @@ async function generateKoeberrapport() {
   };
 
   const displayMsg = buildDisplayMessage(address, boligFileContents, options);
-  const apiPrompt  = buildKoeberrapportPrompt(address, boligFileContents, options);
   const title      = truncate(`Køberrapport: ${address}`);
 
   // Create new conversation
@@ -237,18 +234,13 @@ async function generateKoeberrapport() {
   conv.messages.push({ role: 'user', content: displayMsg });
   Storage.updateConversation(activeConversationId, { messages: conv.messages });
 
-  // Send full context-rich prompt to the AI
+  // Send to AI – with automatic chunking if documents are too large
   isLoading = true;
   $('send-btn').disabled = true;
   showTypingIndicator();
 
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user',   content: apiPrompt },
-  ];
-
   try {
-    const reply = await AIApi.sendMessage(settings, messages);
+    const reply = await sendKoeberrapportToAI(settings, address, boligFileContents, options);
     removeTypingIndicator();
     appendMessage('assistant', reply);
     conv.messages.push({ role: 'assistant', content: reply });
@@ -263,6 +255,85 @@ async function generateKoeberrapport() {
 
   // Reset modal state and UI for next use
   resetBoligModal();
+}
+
+/**
+ * Send the køberrapport request to the AI.
+ * If the total prompt exceeds MAX_PROMPT_CHARS, large documents are first
+ * analysed in chunks so the AI reads the full content, and the resulting
+ * summaries are used when building the final report prompt.
+ */
+async function sendKoeberrapportToAI(settings, address, fileContents, options) {
+  const docMeta = [
+    ['tilstandsrapport', 'Tilstandsrapport'],
+    ['elattest',         'Elinstallationsrapport'],
+    ['energimaerke',     'Energimærkerapport'],
+    ['salgsopstilling',  'Salgsopstilling'],
+  ];
+
+  // Estimate total document chars
+  let totalDocChars = 0;
+  for (const [key] of docMeta) {
+    if (fileContents[key]) totalDocChars += fileContents[key].length;
+  }
+
+  // Conservative fixed estimate for the prompt template (address + sections + options)
+  const TEMPLATE_SIZE_ESTIMATE = 5000;
+
+  if (TEMPLATE_SIZE_ESTIMATE + totalDocChars < MAX_PROMPT_CHARS) {
+    // Everything fits – send all document content in a single request
+    updateTypingStatus('Genererer køberrapport…');
+    return await AIApi.sendMessage(settings, [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content: buildKoeberrapportPrompt(address, fileContents, options) },
+    ]);
+  }
+
+  // Total content is too large for one request – process ALL uploaded documents
+  // with the AI so the full content is read.  Documents exceeding CHUNK_SIZE are
+  // split into multiple sequential chunks; smaller documents are processed as a
+  // single chunk.  This prevents any document from being silently dropped.
+  const processedContents = {};
+  for (const [key, label] of docMeta) {
+    if (!fileContents[key]) continue;
+    processedContents[key] = await processDocumentInChunks(settings, label, address, fileContents[key]);
+  }
+
+  // Build and send the final report using the processed (summarised) content
+  updateTypingStatus('Genererer køberrapport…');
+  return await AIApi.sendMessage(settings, [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user',   content: buildKoeberrapportPrompt(address, processedContents, options) },
+  ]);
+}
+
+/**
+ * Split a large document into CHUNK_SIZE pieces, send each chunk to the AI
+ * asking for a structured extraction of key findings, and return the combined
+ * summaries.  This replaces the old hard truncation at MAX_DOCUMENT_CHARS.
+ */
+async function processDocumentInChunks(settings, docLabel, address, content) {
+  const chunks = [];
+  for (let i = 0; i < content.length; i += CHUNK_SIZE) {
+    chunks.push(content.slice(i, i + CHUNK_SIZE));
+  }
+
+  const summaries = [];
+  for (let i = 0; i < chunks.length; i++) {
+    updateTypingStatus(`Analyserer ${docLabel} (del ${i + 1}/${chunks.length})…`);
+    const chunkPrompt =
+      `Du analyserer del ${i + 1} af ${chunks.length} af dokumentet "${docLabel}" ` +
+      `for boligen på ${address}.\n\n` +
+      `Uddrag alle vigtige oplysninger fra denne del: fund, karakterer (K1/K2/K3), ` +
+      `problemer, anbefalinger og relevante tal.\n\n${chunks[i]}`;
+    const summary = await AIApi.sendMessage(settings, [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content: chunkPrompt },
+    ]);
+    summaries.push(`[Del ${i + 1}/${chunks.length}]\n${summary}`);
+  }
+
+  return summaries.join('\n\n');
 }
 
 /* -------------------------------------------------------
@@ -475,6 +546,17 @@ function showTypingIndicator() {
   `;
   container.appendChild(div);
   scrollToBottom();
+}
+
+function updateTypingStatus(text) {
+  const indicator = $('typing-indicator');
+  if (!indicator) return;
+  const bubble = indicator.querySelector('.message-bubble');
+  if (!bubble) return;
+  bubble.innerHTML = `
+    <div class="typing-dots"><span></span><span></span><span></span></div>
+    <span class="typing-status">${escapeHtml(text)}</span>
+  `;
 }
 
 function removeTypingIndicator() {
