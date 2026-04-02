@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boligkøbsrådgiver – AI-baseret køberrådgiver</title>
+  <meta name="description" content="AI-baseret køberrådgiver til boligkøb i Danmark. Få hjælp til tilstandsrapporter, finansiering, juridiske spørgsmål og meget mere.">
+
+  <!-- Preconnect for performance -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Mobile sidebar overlay -->
+<div id="sidebar-overlay"></div>
+
+<div id="app">
+
+  <!-- ===================== Sidebar ===================== -->
+  <aside id="sidebar" aria-label="Samtaler">
+    <div class="sidebar-header">
+      <div class="sidebar-logo" aria-hidden="true">🏡</div>
+      <div>
+        <div class="sidebar-title">Boligkøbsrådgiver</div>
+        <div class="sidebar-subtitle">AI-baseret køberrådgiver</div>
+      </div>
+    </div>
+
+    <div class="sidebar-actions">
+      <button class="btn-new-chat" id="btn-new-chat" aria-label="Start ny samtale">
+        <span aria-hidden="true">＋</span> Ny samtale
+      </button>
+    </div>
+
+    <div class="sidebar-section-title">Samtaler</div>
+    <div id="conversation-list" role="list" aria-label="Tidligere samtaler"></div>
+
+    <div class="sidebar-footer">
+      <button class="btn-settings" id="btn-settings" aria-label="Åbn indstillinger">
+        ⚙️ Indstillinger
+      </button>
+      <button class="btn-clear-all" id="btn-clear-all" aria-label="Slet alle samtaler">
+        🗑️ Slet alle samtaler
+      </button>
+    </div>
+  </aside>
+
+  <!-- ===================== Main ===================== -->
+  <main id="main">
+
+    <!-- Header -->
+    <header id="header">
+      <button class="btn-menu" id="btn-menu" aria-label="Åbn menu">☰</button>
+      <span id="chat-title">Ny samtale</span>
+      <span class="header-badge">AI Køberrådgiver</span>
+    </header>
+
+    <!-- Setup banner – shown when API key is missing -->
+    <div id="setup-banner" role="alert" aria-live="polite" style="display:none;">
+      <span class="setup-banner-icon">🔑</span>
+      <span>
+        <strong>Tilføj din API-nøgle for at komme i gang.</strong>
+        Klik her for at konfigurere din AI-udbyder.
+      </span>
+    </div>
+
+    <!-- Messages -->
+    <div id="messages-container" role="log" aria-label="Samtale" aria-live="polite">
+
+      <!-- Welcome / empty state -->
+      <div id="welcome-screen" style="display:flex;">
+        <div class="welcome-icon" aria-hidden="true">🏡</div>
+        <h1 class="welcome-title">Din AI-baserede boligkøbsrådgiver</h1>
+        <p class="welcome-desc">
+          Få professionel rådgivning om boligkøb i Danmark – tilstandsrapporter, finansiering,
+          juridiske aspekter, prisforhandling og meget mere. Al data gemmes lokalt i din browser.
+        </p>
+
+        <div class="welcome-suggestions" aria-label="Forslag til spørgsmål">
+          <button class="suggestion-chip" data-prompt="Hvad skal jeg kigge efter i en tilstandsrapport?">
+            📋 Tilstandsrapport
+          </button>
+          <button class="suggestion-chip" data-prompt="Hvad koster det at købe en bolig for 3 millioner kroner? Lav en oversigt over alle udgifter.">
+            💰 Beregn udgifter
+          </button>
+          <button class="suggestion-chip" data-prompt="Hvad er de vigtigste ting at tjekke ved en boligbesigtigelse?">
+            🔍 Besigtigelsestjekliste
+          </button>
+          <button class="suggestion-chip" data-prompt="Hvad betyder tingbogsattest, og hvordan læser jeg den?">
+            📜 Tingbogsattest
+          </button>
+          <button class="suggestion-chip" data-prompt="Hvad er forskellen på et realkreditlån og et banklån?">
+            🏦 Finansiering
+          </button>
+          <button class="suggestion-chip" data-prompt="Hvad er røde flag, jeg bør være opmærksom på ved boligkøb?">
+            🚩 Røde flag
+          </button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Input area -->
+    <div id="input-area">
+      <div class="input-wrapper">
+        <textarea
+          id="user-input"
+          placeholder="Stil et spørgsmål om boligkøb… (Shift+Enter for ny linje)"
+          rows="1"
+          aria-label="Skriv din besked"
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="true"
+        ></textarea>
+        <button id="send-btn" aria-label="Send besked" title="Send (Enter)">
+          ➤
+        </button>
+      </div>
+      <p class="input-hint">
+        Al data gemmes lokalt i din browser – intet sendes til vores servere.
+        Brug altid professionel rådgivning ved vigtige beslutninger.
+      </p>
+    </div>
+
+  </main>
+
+</div>
+
+<!-- ===================== Settings Modal ===================== -->
+<div id="settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-modal-title">
+  <div class="modal">
+
+    <div class="modal-header">
+      <h2 id="settings-modal-title">⚙️ Indstillinger</h2>
+      <button class="btn-close-modal" id="btn-close-settings" aria-label="Luk indstillinger">✕</button>
+    </div>
+
+    <div class="modal-body">
+
+      <!-- Provider -->
+      <div class="form-group">
+        <label for="setting-provider">AI-udbyder</label>
+        <select id="setting-provider" aria-describedby="provider-desc">
+          <!-- Populated by JS -->
+        </select>
+        <p id="provider-desc" class="form-desc">Vælg den AI-tjeneste du har adgang til.</p>
+      </div>
+
+      <!-- API Key -->
+      <div class="form-group">
+        <label id="api-key-label" for="setting-api-key">API-nøgle</label>
+        <div class="input-with-toggle">
+          <input
+            type="password"
+            id="setting-api-key"
+            placeholder="sk-..."
+            autocomplete="off"
+            spellcheck="false"
+            aria-describedby="api-key-hint"
+          >
+          <button class="btn-toggle-visibility" id="btn-toggle-key" type="button" title="Vis nøgle" aria-label="Skift synlighed af API-nøgle">👁</button>
+        </div>
+        <p id="api-key-hint" class="field-note">
+          <!-- Populated by JS -->
+        </p>
+      </div>
+
+      <!-- Model -->
+      <div class="form-group" id="model-group">
+        <label for="setting-model">Model</label>
+        <select id="setting-model">
+          <!-- Populated by JS -->
+        </select>
+      </div>
+
+      <!-- Endpoint (Azure / Custom) -->
+      <div class="form-group" id="endpoint-group" style="display:none;">
+        <label id="endpoint-label" for="setting-endpoint">Endpoint URL</label>
+        <input
+          type="url"
+          id="setting-endpoint"
+          placeholder="https://..."
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <!-- Deployment / Model name (Azure / Custom) -->
+      <div class="form-group" id="deployment-group" style="display:none;">
+        <label id="deployment-label" for="setting-deployment">Model-navn</label>
+        <input
+          type="text"
+          id="setting-deployment"
+          placeholder=""
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <!-- Privacy note -->
+      <div class="form-group">
+        <p class="field-note">
+          🔒 <strong>Privatlivsbeskyttelse:</strong>
+          Din API-nøgle og alle samtaler gemmes udelukkende lokalt i din browser (localStorage).
+          Intet sendes til vores servere. Dine beskeder sendes direkte fra din browser
+          til den valgte AI-udbyder.
+        </p>
+      </div>
+
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn-cancel" id="btn-cancel-settings">Annuller</button>
+      <button class="btn-save" id="btn-save-settings">Gem indstillinger</button>
+    </div>
+
+  </div>
+</div>
+
+<!-- Toast notifications -->
+<div id="toast" class="hidden" role="status" aria-live="polite"></div>
+
+<!-- Scripts -->
+<script src="js/storage.js"></script>
+<script src="js/api.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
