@@ -40,7 +40,8 @@ let isLoading = false;
    ------------------------------------------------------- */
 
 const MAX_FILE_SIZE_BYTES  = 5 * 1024 * 1024; // 5 MB
-const MAX_DOCUMENT_CHARS   = 8000;             // per document, to stay within AI token limits
+const MAX_PROMPT_CHARS     = 80000;            // max chars for a single AI request (~20K tokens)
+const CHUNK_SIZE           = 24000;            // chars per chunk when splitting large documents
 const BOLIG_DOCS           = ['tilstandsrapport', 'elattest', 'energimaerke', 'salgsopstilling'];
 
 const boligFileContents = {
@@ -67,6 +68,7 @@ function isReadableText(text) {
 }
 
 function openBoligModal() {
+  closeSidebar();
   $('bolig-modal').classList.remove('hidden');
   setTimeout(() => $('bolig-address').focus(), 50);
 }
@@ -154,10 +156,7 @@ function buildKoeberrapportPrompt(address, fileContents, options) {
     parts.push(`\n---\n## Dokumenter til analyse\n`);
     for (const [key, label] of uploaded) {
       const content = fileContents[key];
-      const trimmed = content.length > MAX_DOCUMENT_CHARS
-        ? content.slice(0, MAX_DOCUMENT_CHARS) + '\n[...dokument forkortet pga. længde...]'
-        : content;
-      parts.push(`\n### ${label}\n${trimmed}\n`);
+      parts.push(`\n### ${label}\n${content}\n`);
     }
     parts.push(`\n---\n`);
   }
@@ -218,8 +217,17 @@ async function generateKoeberrapport() {
     inkluderPrisoverslag: $('opt-prisoverslag').checked,
   };
 
-  const displayMsg = buildDisplayMessage(address, boligFileContents, options);
-  const apiPrompt  = buildKoeberrapportPrompt(address, boligFileContents, options);
+  // Initial report uses Tilstandsrapport + Elinstallationsrapport + Salgsopstilling only.
+  // Energimærkerapport is offered as a separate follow-up to keep token usage low.
+  const deferredEnergimærke = boligFileContents.energimaerke;
+  const initialFileContents = {
+    tilstandsrapport: boligFileContents.tilstandsrapport,
+    elattest:         boligFileContents.elattest,
+    energimaerke:     null,
+    salgsopstilling:  boligFileContents.salgsopstilling,
+  };
+
+  const displayMsg = buildDisplayMessage(address, initialFileContents, options);
   const title      = truncate(`Køberrapport: ${address}`);
 
   // Create new conversation
@@ -237,22 +245,22 @@ async function generateKoeberrapport() {
   conv.messages.push({ role: 'user', content: displayMsg });
   Storage.updateConversation(activeConversationId, { messages: conv.messages });
 
-  // Send full context-rich prompt to the AI
+  // Send to AI – with automatic chunking if documents are too large
   isLoading = true;
   $('send-btn').disabled = true;
   showTypingIndicator();
 
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    { role: 'user',   content: apiPrompt },
-  ];
-
   try {
-    const reply = await AIApi.sendMessage(settings, messages);
+    const reply = await sendKoeberrapportToAI(settings, address, initialFileContents, options);
     removeTypingIndicator();
     appendMessage('assistant', reply);
     conv.messages.push({ role: 'assistant', content: reply });
     Storage.updateConversation(activeConversationId, { messages: conv.messages });
+
+    // If an Energimærkerapport was uploaded, offer it as an optional follow-up
+    if (deferredEnergimærke) {
+      offerEnergyAnalysis(settings, address, conv.id, deferredEnergimærke);
+    }
   } catch (err) {
     removeTypingIndicator();
     appendMessage('assistant', `⚠️ **Fejl:** ${escapeHtml(err.message)}`);
@@ -265,9 +273,162 @@ async function generateKoeberrapport() {
   resetBoligModal();
 }
 
-/* -------------------------------------------------------
-   DOM helpers
-   ------------------------------------------------------- */
+/**
+ * Send the køberrapport request to the AI.
+ * If the total prompt exceeds MAX_PROMPT_CHARS, large documents are first
+ * analysed in chunks so the AI reads the full content, and the resulting
+ * summaries are used when building the final report prompt.
+ */
+async function sendKoeberrapportToAI(settings, address, fileContents, options) {
+  const docMeta = [
+    ['tilstandsrapport', 'Tilstandsrapport'],
+    ['elattest',         'Elinstallationsrapport'],
+    ['energimaerke',     'Energimærkerapport'],
+    ['salgsopstilling',  'Salgsopstilling'],
+  ];
+
+  // Estimate total document chars
+  let totalDocChars = 0;
+  for (const [key] of docMeta) {
+    if (fileContents[key]) totalDocChars += fileContents[key].length;
+  }
+
+  // Conservative fixed estimate for the prompt template (address + sections + options)
+  const TEMPLATE_SIZE_ESTIMATE = 5000;
+
+  if (TEMPLATE_SIZE_ESTIMATE + totalDocChars < MAX_PROMPT_CHARS) {
+    // Everything fits – send all document content in a single request
+    updateTypingStatus('Genererer køberrapport…');
+    return await AIApi.sendMessage(settings, [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content: buildKoeberrapportPrompt(address, fileContents, options) },
+    ]);
+  }
+
+  // Total content is too large for one request – process uploaded documents
+  // SEQUENTIALLY (one at a time) to avoid hitting the tokens-per-minute rate
+  // limit.  Within each document, all chunks are still parallel for speed.
+  const uploadedDocs = docMeta.filter(([key]) => fileContents[key]);
+  const processedContents = {};
+  for (const [key, label] of uploadedDocs) {
+    updateTypingStatus(`Analyserer ${label}…`);
+    try {
+      processedContents[key] = await processDocumentInChunks(settings, label, address, fileContents[key]);
+    } catch (err) {
+      processedContents[key] = `[Analyse af ${label} mislykkedes: ${err?.message || 'Ukendt fejl'}]`;
+    }
+  }
+
+  // Build and send the final report using the processed (summarised) content
+  updateTypingStatus('Genererer køberrapport…');
+  return await AIApi.sendMessage(settings, [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user',   content: buildKoeberrapportPrompt(address, processedContents, options) },
+  ]);
+}
+
+/**
+ * Split a large document into CHUNK_SIZE pieces, analyse all chunks in parallel,
+ * and return the combined AI-generated summaries in original order.
+ * Using Promise.all means all chunks are dispatched simultaneously so the total
+ * wait equals the slowest chunk, not the sum of all chunks.
+ */
+async function processDocumentInChunks(settings, docLabel, address, content) {
+  const chunks = [];
+  for (let i = 0; i < content.length; i += CHUNK_SIZE) {
+    chunks.push(content.slice(i, i + CHUNK_SIZE));
+  }
+
+  const chunkResults = await Promise.allSettled(chunks.map((chunk, i) => {
+    const chunkPrompt =
+      `Du analyserer del ${i + 1} af ${chunks.length} af dokumentet "${docLabel}" ` +
+      `for boligen på ${address}.\n\n` +
+      `Uddrag alle vigtige oplysninger fra denne del: fund, karakterer (K1/K2/K3), ` +
+      `problemer, anbefalinger og relevante tal.\n\n${chunk}`;
+    return AIApi.sendMessage(settings, [
+      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'user',   content: chunkPrompt },
+    ]).then(summary => `[Del ${i + 1}/${chunks.length}]\n${summary}`);
+  }));
+
+  const summaries = chunkResults.map((result, i) =>
+    result.status === 'fulfilled'
+      ? result.value
+      : `[Del ${i + 1}/${chunks.length}]\n[Analyse mislykkedes: ${result.reason?.message || 'Ukendt fejl'}]`
+  );
+
+  return summaries.join('\n\n');
+}
+
+/**
+ * Append a follow-up offer to the chat asking whether the user wants an
+ * energy analysis from the uploaded Energimærkerapport.  The offer is shown
+ * as an assistant message with a single action button.  Clicking the button
+ * triggers addEnergyAnalysis() for the same conversation.
+ */
+function offerEnergyAnalysis(settings, address, convId, energimaerkeContent) {
+  const container = $('messages-container');
+  const wrap = document.createElement('div');
+  wrap.className = 'message assistant';
+  wrap.innerHTML = `
+    <div class="message-avatar">🏡</div>
+    <div class="message-bubble">
+      <p>🌿 <strong>Energimærkerapport uploadet.</strong> Ønsker du en detaljeret energianalyse med forbedringsforslagene tilføjet til rapporten?</p>
+      <button class="btn-energy-analysis" type="button">📊 Ja, tilføj energianalyse</button>
+    </div>
+  `;
+  container.appendChild(wrap);
+  scrollToBottom();
+
+  wrap.querySelector('.btn-energy-analysis').addEventListener('click', async () => {
+    wrap.remove();
+    await addEnergyAnalysis(settings, address, convId, energimaerkeContent);
+  });
+}
+
+/**
+ * Send the Energimærkerapport to the AI as a follow-up in the existing
+ * conversation and append the energy analysis to the chat.
+ */
+async function addEnergyAnalysis(settings, address, convId, energimaerkeContent) {
+  if (isLoading) return;
+
+  const conv = Storage.getConversation(convId);
+  if (!conv) return;
+
+  const displayMsg = '📊 Tilføj energianalyse';
+  appendMessage('user', displayMsg);
+
+  isLoading = true;
+  $('send-btn').disabled = true;
+  showTypingIndicator();
+  updateTypingStatus('Analyserer energimærkerapport…');
+
+  const energiPrompt =
+    `Tilføj en energianalyse til køberrapporten for ${address} baseret på energimærkerapporten:\n\n` +
+    `### Energimærkerapport\n${energimaerkeContent}\n\n` +
+    `Beskriv: nuværende energimærke og estimeret varmeforbrug, de vigtigste energiforbedrende tiltag, ` +
+    `estimerede besparelser og investeringer samt en prioriteret handlingsplan.`;
+
+  try {
+    const reply = await AIApi.sendMessage(settings, [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...conv.messages,
+      { role: 'user', content: energiPrompt },
+    ]);
+    removeTypingIndicator();
+    appendMessage('assistant', reply);
+    conv.messages.push({ role: 'user', content: displayMsg });
+    conv.messages.push({ role: 'assistant', content: reply });
+    Storage.updateConversation(convId, { messages: conv.messages });
+  } catch (err) {
+    removeTypingIndicator();
+    appendMessage('assistant', `⚠️ **Fejl:** ${escapeHtml(err.message)}`);
+  } finally {
+    isLoading = false;
+    $('send-btn').disabled = false;
+  }
+}
 
 const $ = id => document.getElementById(id);
 
@@ -475,6 +636,17 @@ function showTypingIndicator() {
   `;
   container.appendChild(div);
   scrollToBottom();
+}
+
+function updateTypingStatus(text) {
+  const indicator = $('typing-indicator');
+  if (!indicator) return;
+  const bubble = indicator.querySelector('.message-bubble');
+  if (!bubble) return;
+  bubble.innerHTML = `
+    <div class="typing-dots"><span></span><span></span><span></span></div>
+    <span class="typing-status">${escapeHtml(text)}</span>
+  `;
 }
 
 function removeTypingIndicator() {
