@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="AI-baseret boligkøbsrådgiver – få professionel rådgivning om boligkøb i Danmark." />
+  <title>Boligkøbsrådgiveren</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <!-- ── Sidelinje ─────────────────────────────────────────────────────── -->
+  <aside class="sidebar" role="navigation" aria-label="Samtalehistorik">
+    <div class="sidebar-header">
+      <h1>🏡 Boligkøbsrådgiveren</h1>
+      <p>AI-rådgivning om boligkøb i Danmark</p>
+    </div>
+
+    <button id="new-conversation-btn" aria-label="Start ny samtale">
+      Ny samtale
+    </button>
+
+    <div id="conversation-list" class="conversation-list" role="list" aria-label="Gemte samtaler"></div>
+
+    <div class="sidebar-footer">
+      <button id="settings-btn" aria-label="Åbn indstillinger">⚙ Indstillinger</button>
+      <button id="clear-history-btn" aria-label="Slet al historik">🗑 Slet alt</button>
+    </div>
+  </aside>
+
+  <!-- ── Hovedindhold ──────────────────────────────────────────────────── -->
+  <main class="main">
+    <header class="main-header">
+      <h2>Boligkøbsrådgiveren</h2>
+      <button id="settings-btn-mobile" class="btn-secondary"
+              style="display:none" aria-label="Åbn indstillinger">⚙ Indstillinger</button>
+    </header>
+
+    <!-- Tomt tilstand -->
+    <div id="empty-state" aria-live="polite">
+      <span class="empty-icon">🏡</span>
+      <h3>Velkommen til Boligkøbsrådgiveren</h3>
+      <p>
+        Få professionel AI-rådgivning om boligkøb i Danmark.
+        Stil spørgsmål om priser, finansiering, tilstandsrapporter, jura og meget mere.
+      </p>
+      <button id="start-first-chat-btn">Start en ny samtale</button>
+    </div>
+
+    <!-- Chatbeskeder -->
+    <div id="chat-messages" role="log" aria-live="polite" aria-label="Samtale" hidden></div>
+
+    <!-- Inputområde -->
+    <div class="input-area">
+      <div class="input-row">
+        <textarea
+          id="message-input"
+          rows="1"
+          placeholder="Stil et spørgsmål om boligkøb…"
+          aria-label="Skriv din besked"
+        ></textarea>
+        <button id="send-button" aria-label="Send besked">
+          <!-- Send-ikon -->
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+               aria-hidden="true">
+            <line x1="22" y1="2" x2="11" y2="13"></line>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+          </svg>
+        </button>
+      </div>
+      <p class="input-hint">Tryk Enter for at sende · Shift+Enter for ny linje</p>
+    </div>
+  </main>
+
+  <!-- ── Indstillingsmodal ─────────────────────────────────────────────── -->
+  <div id="settings-modal" class="modal-overlay" role="dialog"
+       aria-modal="true" aria-labelledby="settings-title" hidden>
+    <div class="modal">
+      <div class="modal-header">
+        <h2 id="settings-title">Indstillinger</h2>
+        <button id="settings-close" class="modal-close" aria-label="Luk indstillinger">&times;</button>
+      </div>
+
+      <form id="settings-form" novalidate>
+        <div class="modal-body">
+
+          <!-- AI-udbyder -->
+          <div class="form-group">
+            <label for="provider-select">AI-udbyder</label>
+            <select id="provider-select" name="provider" required>
+              <option value="openai">OpenAI (ChatGPT)</option>
+              <option value="mistral">Mistral AI</option>
+              <option value="azure">Azure OpenAI</option>
+            </select>
+          </div>
+
+          <!-- Modelnavn -->
+          <div class="form-group">
+            <label for="model-input">Model <small>(valgfrit)</small></label>
+            <input type="text" id="model-input" name="model"
+                   placeholder="f.eks. gpt-4o, mistral-large-latest" />
+            <span class="form-hint">Lad feltet være tomt for at bruge standardmodellen.</span>
+          </div>
+
+          <!-- API-nøgle -->
+          <div class="form-group">
+            <label for="api-key-input">API-nøgle <abbr title="Påkrævet">*</abbr></label>
+            <input type="password" id="api-key-input" name="apiKey"
+                   placeholder="sk-…" autocomplete="off" required />
+            <span class="form-hint">
+              Din nøgle sendes direkte til AI-udbyderen og deles aldrig med andre.
+            </span>
+          </div>
+
+          <!-- Husk API-nøgle -->
+          <div class="form-group form-group--inline">
+            <input type="checkbox" id="remember-api-key-input" name="rememberApiKey" />
+            <label for="remember-api-key-input">Husk nøgle mellem sessioner</label>
+            <span class="form-hint">
+              Nøglen gemmes ellers kun i den aktuelle browser-session og slettes automatisk,
+              når fanen lukkes.
+            </span>
+          </div>
+
+          <!-- Azure endpoint (kun vist for Azure) -->
+          <div id="azure-endpoint-group" class="form-group" hidden>
+            <label for="azure-endpoint-input">Azure endpoint <abbr title="Påkrævet for Azure">*</abbr></label>
+            <input type="text" id="azure-endpoint-input" name="azureEndpoint"
+                   placeholder="https://&lt;ressource&gt;.openai.azure.com/…" />
+            <span class="form-hint">
+              F.eks. <code>https://min-ressource.openai.azure.com/openai/deployments/gpt-4o/chat/completions?api-version=2024-02-01</code>
+            </span>
+          </div>
+
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" id="settings-cancel" class="btn-secondary">Annuller</button>
+          <button type="submit" class="btn-primary">Gem indstillinger</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="js/storage.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
