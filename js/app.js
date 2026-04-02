@@ -68,6 +68,7 @@ function isReadableText(text) {
 }
 
 function openBoligModal() {
+  closeSidebar();
   $('bolig-modal').classList.remove('hidden');
   setTimeout(() => $('bolig-address').focus(), 50);
 }
@@ -216,7 +217,17 @@ async function generateKoeberrapport() {
     inkluderPrisoverslag: $('opt-prisoverslag').checked,
   };
 
-  const displayMsg = buildDisplayMessage(address, boligFileContents, options);
+  // Initial report uses Tilstandsrapport + Elinstallationsrapport + Salgsopstilling only.
+  // Energimærkerapport is offered as a separate follow-up to keep token usage low.
+  const deferredEnergimærke = boligFileContents.energimaerke;
+  const initialFileContents = {
+    tilstandsrapport: boligFileContents.tilstandsrapport,
+    elattest:         boligFileContents.elattest,
+    energimaerke:     null,
+    salgsopstilling:  boligFileContents.salgsopstilling,
+  };
+
+  const displayMsg = buildDisplayMessage(address, initialFileContents, options);
   const title      = truncate(`Køberrapport: ${address}`);
 
   // Create new conversation
@@ -240,11 +251,16 @@ async function generateKoeberrapport() {
   showTypingIndicator();
 
   try {
-    const reply = await sendKoeberrapportToAI(settings, address, boligFileContents, options);
+    const reply = await sendKoeberrapportToAI(settings, address, initialFileContents, options);
     removeTypingIndicator();
     appendMessage('assistant', reply);
     conv.messages.push({ role: 'assistant', content: reply });
     Storage.updateConversation(activeConversationId, { messages: conv.messages });
+
+    // If an Energimærkerapport was uploaded, offer it as an optional follow-up
+    if (deferredEnergimærke) {
+      offerEnergyAnalysis(settings, address, conv.id, deferredEnergimærke);
+    }
   } catch (err) {
     removeTypingIndicator();
     appendMessage('assistant', `⚠️ **Fejl:** ${escapeHtml(err.message)}`);
@@ -289,25 +305,18 @@ async function sendKoeberrapportToAI(settings, address, fileContents, options) {
     ]);
   }
 
-  // Total content is too large for one request – process ALL uploaded documents
-  // with the AI so the full content is read.  All documents are dispatched in
-  // parallel so the total wait time equals the slowest document, not the sum.
-  updateTypingStatus('Analyserer dokumenter…');
+  // Total content is too large for one request – process uploaded documents
+  // SEQUENTIALLY (one at a time) to avoid hitting the tokens-per-minute rate
+  // limit.  Within each document, all chunks are still parallel for speed.
   const uploadedDocs = docMeta.filter(([key]) => fileContents[key]);
-  const docResults = await Promise.allSettled(
-    uploadedDocs.map(([key, label]) =>
-      processDocumentInChunks(settings, label, address, fileContents[key])
-        .then(summary => [key, summary])
-    )
-  );
-
   const processedContents = {};
-  for (let i = 0; i < uploadedDocs.length; i++) {
-    const [key, label] = uploadedDocs[i];
-    const result = docResults[i];
-    processedContents[key] = result.status === 'fulfilled'
-      ? result.value[1]
-      : `[Analyse af ${label} mislykkedes: ${result.reason?.message || 'Ukendt fejl'}]`;
+  for (const [key, label] of uploadedDocs) {
+    updateTypingStatus(`Analyserer ${label}…`);
+    try {
+      processedContents[key] = await processDocumentInChunks(settings, label, address, fileContents[key]);
+    } catch (err) {
+      processedContents[key] = `[Analyse af ${label} mislykkedes: ${err?.message || 'Ukendt fejl'}]`;
+    }
   }
 
   // Build and send the final report using the processed (summarised) content
@@ -351,9 +360,75 @@ async function processDocumentInChunks(settings, docLabel, address, content) {
   return summaries.join('\n\n');
 }
 
-/* -------------------------------------------------------
-   DOM helpers
-   ------------------------------------------------------- */
+/**
+ * Append a follow-up offer to the chat asking whether the user wants an
+ * energy analysis from the uploaded Energimærkerapport.  The offer is shown
+ * as an assistant message with a single action button.  Clicking the button
+ * triggers addEnergyAnalysis() for the same conversation.
+ */
+function offerEnergyAnalysis(settings, address, convId, energimaerkeContent) {
+  const container = $('messages-container');
+  const wrap = document.createElement('div');
+  wrap.className = 'message assistant';
+  wrap.innerHTML = `
+    <div class="message-avatar">🏡</div>
+    <div class="message-bubble">
+      <p>🌿 <strong>Energimærkerapport uploadet.</strong> Ønsker du en detaljeret energianalyse med forbedringsforslagene tilføjet til rapporten?</p>
+      <button class="btn-energy-analysis" type="button">📊 Ja, tilføj energianalyse</button>
+    </div>
+  `;
+  container.appendChild(wrap);
+  scrollToBottom();
+
+  wrap.querySelector('.btn-energy-analysis').addEventListener('click', async () => {
+    wrap.remove();
+    await addEnergyAnalysis(settings, address, convId, energimaerkeContent);
+  });
+}
+
+/**
+ * Send the Energimærkerapport to the AI as a follow-up in the existing
+ * conversation and append the energy analysis to the chat.
+ */
+async function addEnergyAnalysis(settings, address, convId, energimaerkeContent) {
+  if (isLoading) return;
+
+  const conv = Storage.getConversation(convId);
+  if (!conv) return;
+
+  const displayMsg = '📊 Tilføj energianalyse';
+  appendMessage('user', displayMsg);
+
+  isLoading = true;
+  $('send-btn').disabled = true;
+  showTypingIndicator();
+  updateTypingStatus('Analyserer energimærkerapport…');
+
+  const energiPrompt =
+    `Tilføj en energianalyse til køberrapporten for ${address} baseret på energimærkerapporten:\n\n` +
+    `### Energimærkerapport\n${energimaerkeContent}\n\n` +
+    `Beskriv: nuværende energimærke og estimeret varmeforbrug, de vigtigste energiforbedrende tiltag, ` +
+    `estimerede besparelser og investeringer samt en prioriteret handlingsplan.`;
+
+  try {
+    const reply = await AIApi.sendMessage(settings, [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...conv.messages,
+      { role: 'user', content: energiPrompt },
+    ]);
+    removeTypingIndicator();
+    appendMessage('assistant', reply);
+    conv.messages.push({ role: 'user', content: displayMsg });
+    conv.messages.push({ role: 'assistant', content: reply });
+    Storage.updateConversation(convId, { messages: conv.messages });
+  } catch (err) {
+    removeTypingIndicator();
+    appendMessage('assistant', `⚠️ **Fejl:** ${escapeHtml(err.message)}`);
+  } finally {
+    isLoading = false;
+    $('send-btn').disabled = false;
+  }
+}
 
 const $ = id => document.getElementById(id);
 

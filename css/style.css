@@ -944,6 +944,29 @@ body {
   cursor: not-allowed;
 }
 
+/* ---------- Energy analysis follow-up button ---------- */
+.btn-energy-analysis {
+  margin-top: 0.75rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 1rem;
+  background: var(--color-accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-energy-analysis:hover {
+  background: #059669;
+}
+.btn-energy-analysis:active {
+  background: #047857;
+}
+
 /* ---------- Scrollbar ---------- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
