@@ -733,6 +733,210 @@ body {
   to   { opacity: 1; transform: translateY(0); }
 }
 
+/* ---------- Køberrapport sidebar button ---------- */
+.btn-bolig-rapport {
+  width: 100%;
+  padding: 0.6rem 1rem;
+  background: var(--color-accent);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  transition: background 0.15s;
+}
+
+.btn-bolig-rapport:hover {
+  background: #059669;
+}
+
+/* ---------- Wide modal ---------- */
+.modal.modal-wide {
+  max-width: 640px;
+}
+
+/* ---------- Form helpers ---------- */
+.required-mark {
+  color: var(--color-danger);
+}
+
+.label-optional {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--color-text-muted);
+}
+
+/* ---------- Upload grid ---------- */
+.upload-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+/* ---------- Upload item ---------- */
+.upload-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.upload-item-label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+/* ---------- File upload zone ---------- */
+.file-upload-zone {
+  border: 1.5px dashed var(--color-border);
+  border-radius: 0.5rem;
+  background: var(--color-bg);
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color 0.15s, background 0.15s;
+  overflow: hidden;
+  position: relative;
+}
+
+.file-upload-zone:hover {
+  border-color: var(--color-primary);
+  background: #eff6ff;
+}
+
+.file-input-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+
+.file-upload-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--color-primary);
+  font-weight: 500;
+  width: 100%;
+  text-align: center;
+}
+
+.file-upload-preview {
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.6rem;
+  width: 100%;
+  gap: 0.4rem;
+}
+
+.file-name {
+  font-size: 0.75rem;
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.file-remove-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  padding: 0.1rem 0.25rem;
+  border-radius: 0.25rem;
+  flex-shrink: 0;
+  line-height: 1;
+  transition: color 0.1s;
+}
+
+.file-remove-btn:hover {
+  color: var(--color-danger);
+}
+
+/* ---------- Option list ---------- */
+.option-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+
+.option-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.65rem 0.875rem;
+  border: 1.5px solid var(--color-border);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-weight: normal;
+  transition: background 0.1s, border-color 0.15s;
+}
+
+.option-item:hover {
+  background: #eff6ff;
+  border-color: var(--color-primary);
+}
+
+.option-item input[type="checkbox"] {
+  margin-top: 0.15rem;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.option-item > span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.option-item strong {
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.option-desc {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+/* ---------- Generate report button ---------- */
+.btn-generate-report {
+  padding: 0.6rem 1.25rem;
+  background: var(--color-accent);
+  border: none;
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: white;
+  transition: background 0.15s;
+}
+
+.btn-generate-report:hover {
+  background: #059669;
+}
+
+.btn-generate-report:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* ---------- Scrollbar ---------- */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -785,6 +989,10 @@ body {
 
   #sidebar-overlay.active {
     display: block;
+  }
+
+  .upload-grid {
+    grid-template-columns: 1fr;
   }
 }
 

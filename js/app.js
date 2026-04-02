@@ -36,6 +36,236 @@ let activeConversationId = null;
 let isLoading = false;
 
 /* -------------------------------------------------------
+   Bolig Rapport – state & helpers
+   ------------------------------------------------------- */
+
+const MAX_FILE_SIZE_BYTES  = 5 * 1024 * 1024; // 5 MB
+const MAX_DOCUMENT_CHARS   = 8000;             // per document, to stay within AI token limits
+const BOLIG_DOCS           = ['tilstandsrapport', 'elattest', 'energimaerke', 'salgsopstilling'];
+
+const boligFileContents = {
+  tilstandsrapport: null,
+  elattest:         null,
+  energimaerke:     null,
+  salgsopstilling:  null,
+};
+
+function readFileAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = e => resolve(e.target.result);
+    reader.onerror = () => reject(new Error(`Kunne ikke læse "${file.name}"`));
+    reader.readAsText(file, 'UTF-8');
+  });
+}
+
+/** Returns true if extracted text looks like readable content (not binary garbage). */
+function isReadableText(text) {
+  if (!text || text.trim().length < 30) return false;
+  const printable = (text.match(/[\x20-\x7E\u00A0-\uFFFF\n\r\t]/g) || []).length;
+  return printable / text.length > 0.65;
+}
+
+function openBoligModal() {
+  $('bolig-modal').classList.remove('hidden');
+  setTimeout(() => $('bolig-address').focus(), 50);
+}
+
+function closeBoligModal() {
+  $('bolig-modal').classList.add('hidden');
+}
+
+function resetBoligModal() {
+  $('bolig-address').value = '';
+  BOLIG_DOCS.forEach(doc => {
+    boligFileContents[doc] = null;
+    $(`file-${doc}`).value = '';
+    $(`preview-${doc}`).style.display = 'none';
+    $(`zone-${doc}`).querySelector('.file-upload-trigger').style.display = '';
+  });
+  $('opt-flags').checked        = true;
+  $('opt-forhandling').checked  = true;
+  $('opt-prisoverslag').checked = true;
+}
+
+async function handleFileUpload(doc, file) {
+  if (!file) return;
+  if (file.size > MAX_FILE_SIZE_BYTES) {
+    showToast('Filen er for stor (maks. 5 MB).', 'error');
+    return;
+  }
+  try {
+    const text = await readFileAsText(file);
+    if (!isReadableText(text)) {
+      showToast(`"${file.name}": Filen indeholder ikke læsbar tekst. Brug en TXT-fil eller en digital (ikke-skannet) PDF.`, 'error', 5000);
+      return;
+    }
+    boligFileContents[doc] = text;
+    $(`name-${doc}`).textContent = file.name;
+    $(`preview-${doc}`).style.display = 'flex';
+    $(`zone-${doc}`).querySelector('.file-upload-trigger').style.display = 'none';
+    showToast(`"${file.name}" klar ✓`, 'success', 2000);
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+function removeBoligFile(doc) {
+  boligFileContents[doc] = null;
+  $(`file-${doc}`).value = '';
+  $(`preview-${doc}`).style.display = 'none';
+  $(`zone-${doc}`).querySelector('.file-upload-trigger').style.display = '';
+}
+
+function buildDisplayMessage(address, fileContents, options) {
+  const uploaded = [
+    fileContents.tilstandsrapport && 'Tilstandsrapport',
+    fileContents.elattest         && 'Elattest',
+    fileContents.energimaerke     && 'Energimærkerapport',
+    fileContents.salgsopstilling  && 'Salgsopstilling',
+  ].filter(Boolean);
+
+  const selected = [
+    options.inkluderFlag         && '🚦 Røde/Gule/Grønne flag',
+    options.inkluderForhandling  && '💬 Prisforhandlingsstrategi',
+    options.inkluderPrisoverslag && '🔧 Prisoverslag for udbedring',
+  ].filter(Boolean);
+
+  let msg = `📄 Generer Køberrapport\n\nAdresse: ${address}`;
+  if (uploaded.length > 0) msg += `\nDokumenter: ${uploaded.join(', ')}`;
+  if (selected.length > 0) msg += `\nInkluder: ${selected.join(', ')}`;
+  return msg;
+}
+
+function buildKoeberrapportPrompt(address, fileContents, options) {
+  const parts = [];
+
+  parts.push(`Generer en detaljeret og struktureret KØBERRAPPORT for følgende bolig:\n\n**Adresse:** ${address}\n`);
+
+  const docMeta = [
+    ['tilstandsrapport', 'Tilstandsrapport'],
+    ['elattest',         'Elinstallationsrapport (Elattest)'],
+    ['energimaerke',     'Energimærkerapport'],
+    ['salgsopstilling',  'Salgsopstilling'],
+  ];
+  const uploaded = docMeta.filter(([k]) => fileContents[k] && fileContents[k].trim());
+
+  if (uploaded.length > 0) {
+    parts.push(`\n---\n## Dokumenter til analyse\n`);
+    for (const [key, label] of uploaded) {
+      const content = fileContents[key];
+      const trimmed = content.length > MAX_DOCUMENT_CHARS
+        ? content.slice(0, MAX_DOCUMENT_CHARS) + '\n[...dokument forkortet pga. længde...]'
+        : content;
+      parts.push(`\n### ${label}\n${trimmed}\n`);
+    }
+    parts.push(`\n---\n`);
+  }
+
+  parts.push(`\n## Rapporten skal indeholde følgende afsnit:\n`);
+
+  parts.push(`\n**1. Overordnet vurdering**\nSamlet vurdering af ejendommen på ${address} baseret på tilgængelige informationer.\n`);
+
+  if (uploaded.length > 0) {
+    parts.push(`\n**2. Dokumentanalyse**\nGrundigt gennemgang af de uploadede dokumenter:\n- Tilstandsrapportens karakterer (K1/K2/K3) og de vigtigste fund\n- Elinstallationsproblemer og anbefalinger fra elattest\n- Energiforbrug, mærke og forbedringsforslag fra energimærket\n- Nøgletal og vilkår fra salgsopstillingen\n`);
+  } else {
+    parts.push(`\n**2. Dokumenttjekliste**\nHvad bør køber tjekke i tilstandsrapport, elattest og energimærke for denne type ejendom?\n`);
+  }
+
+  parts.push(`\n**3. Juridiske forhold og servitutter**\nHvad bør undersøges vedrørende servitutter, deklarationer og juridiske bindinger for ${address}? Henvis til tinglysning.dk og BBR-registret. Nævn typiske servituttyper for denne type ejendom og hvad man særligt skal være opmærksom på.\n`);
+
+  parts.push(`\n**4. Lokalplan, kommuneplan og byggeplaner**\nHvad bør undersøges for ${address} vedrørende:\n- Gældende lokalplan og anvendelsesbestemmelser\n- Muligheder og begrænsninger for til- og ombygning\n- Fremtidige byggeprojekter eller udviklingsplaner i nærområdet\nHenvis til planinfo.dk og kommunens hjemmeside.\n`);
+
+  parts.push(`\n**5. Nærområde og beliggenhed**\nVurder nærområdet til ${address}:\n- Infrastruktur, veje og trafikforhold\n- Offentlig transport (bus, tog, metro)\n- Skoler, daginstitutioner og dagligvareindkøb\n- Generel attraktivitet og prisniveau i området\n`);
+
+  if (options.inkluderFlag) {
+    parts.push(`\n**6. 🔴🟡🟢 Røde, Gule og Grønne flag**\nLav en overskuelig liste:\n- 🔴 **RØDE FLAG** – Alvorlige problemer der kræver øjeblikkelig handling eller professionel inspektion\n- 🟡 **GULE FLAG** – Opmærksomhedspunkter der bør undersøges nærmere inden køb\n- 🟢 **GRØNNE FLAG** – Positive aspekter og styrker ved boligen\n`);
+  }
+
+  if (options.inkluderForhandling) {
+    parts.push(`\n**7. 💬 Prisforhandlingsstrategi**\nKonkrete råd til prisforhandling${uploaded.length > 0 ? ' baseret på dokumentfundene' : ''}:\n- Hvilke specifikke punkter kan bruges som forhandlingsargumenter?\n- Hvad er et realistisk forhandlingsrum? (angiv gerne i kr. eller %)\n- Anbefalet fremgangsmåde og timing for forhandlingen\n`);
+  }
+
+  if (options.inkluderPrisoverslag) {
+    parts.push(`\n**8. 🔧 Prisoverslag for udbedring af fejl og mangler**\n${uploaded.length > 0 && fileContents.tilstandsrapport ? 'Baseret på tilstandsrapporten og eventuelle andre dokumenter: angiv' : 'Angiv'} estimerede omkostninger for at udbedre de identificerede fejl og mangler:\n- Akutte udbedringer (skal gøres nu)\n- Anbefalede udbedringer (inden for 1-3 år)\n- Optionelle forbedringer (energi, komfort, øget værdi)\nAngiv priser i DKK med reference til SKAFOR-prisguiden eller tilsvarende branchestandarder.\n`);
+  }
+
+  parts.push(`\n---\nStrukturér rapporten klart med tydelige overskrifter og brug gerne tabeller eller punktlister for overblik. Afslut med en samlet anbefaling til køber.\n\n⚠️ Rapporten er baseret på AI-analyse og bør altid suppleres med professionel rådgivning fra en autoriseret ejendomsmægler, byggesagkyndig og advokat inden køb.\n`);
+
+  return parts.join('');
+}
+
+async function generateKoeberrapport() {
+  const address = ($('bolig-address').value || '').trim();
+
+  if (!address) {
+    showToast('Angiv venligst en adresse.', 'error');
+    $('bolig-address').focus();
+    return;
+  }
+
+  const settings = Storage.getSettings();
+  if (!settings.apiKey || !settings.apiKey.trim()) {
+    showToast('Tilføj en API-nøgle i Indstillinger for at generere rapport.', 'error', 4000);
+    closeBoligModal();
+    openSettingsModal();
+    return;
+  }
+
+  const options = {
+    inkluderFlag:         $('opt-flags').checked,
+    inkluderForhandling:  $('opt-forhandling').checked,
+    inkluderPrisoverslag: $('opt-prisoverslag').checked,
+  };
+
+  const displayMsg = buildDisplayMessage(address, boligFileContents, options);
+  const apiPrompt  = buildKoeberrapportPrompt(address, boligFileContents, options);
+  const title      = truncate(`Køberrapport: ${address}`);
+
+  // Create new conversation
+  const conv = Storage.createConversation(title);
+  activeConversationId = conv.id;
+  Storage.setActiveConversationId(conv.id);
+  $('chat-title').textContent = title;
+  renderMessages([]);
+  renderConversationList();
+  closeBoligModal();
+  closeSidebar();
+
+  // Show concise user message in the chat
+  appendMessage('user', displayMsg);
+  conv.messages.push({ role: 'user', content: displayMsg });
+  Storage.updateConversation(activeConversationId, { messages: conv.messages });
+
+  // Send full context-rich prompt to the AI
+  isLoading = true;
+  $('send-btn').disabled = true;
+  showTypingIndicator();
+
+  const messages = [
+    { role: 'system', content: SYSTEM_PROMPT },
+    { role: 'user',   content: apiPrompt },
+  ];
+
+  try {
+    const reply = await AIApi.sendMessage(settings, messages);
+    removeTypingIndicator();
+    appendMessage('assistant', reply);
+    conv.messages.push({ role: 'assistant', content: reply });
+    Storage.updateConversation(activeConversationId, { messages: conv.messages });
+  } catch (err) {
+    removeTypingIndicator();
+    appendMessage('assistant', `⚠️ **Fejl:** ${escapeHtml(err.message)}`);
+  } finally {
+    isLoading = false;
+    $('send-btn').disabled = false;
+  }
+
+  // Reset modal state and UI for next use
+  resetBoligModal();
+}
+
+/* -------------------------------------------------------
    DOM helpers
    ------------------------------------------------------- */
 
@@ -513,6 +743,29 @@ function autoResizeTextarea(el) {
 function initEvents() {
   // New chat
   $('btn-new-chat').addEventListener('click', startNewConversation);
+
+  // Bolig rapport modal
+  $('btn-bolig-rapport').addEventListener('click', openBoligModal);
+  $('btn-close-bolig').addEventListener('click', closeBoligModal);
+  $('btn-cancel-bolig').addEventListener('click', closeBoligModal);
+  $('btn-generate-report').addEventListener('click', generateKoeberrapport);
+  $('bolig-modal').addEventListener('click', e => {
+    if (e.target === $('bolig-modal')) closeBoligModal();
+  });
+
+  // File upload inputs
+  BOLIG_DOCS.forEach(doc => {
+    $(`file-${doc}`).addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (file) await handleFileUpload(doc, file);
+    });
+  });
+
+  // File remove buttons (event delegation on modal body)
+  $('bolig-modal').addEventListener('click', e => {
+    const btn = e.target.closest('.file-remove-btn');
+    if (btn) removeBoligFile(btn.dataset.doc);
+  });
 
   // Settings open/close
   $('btn-settings').addEventListener('click', openSettingsModal);
